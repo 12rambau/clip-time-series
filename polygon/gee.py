@@ -1,5 +1,4 @@
 from sepal_ui.scripts import gee as gs
-from utils import messages as ms
 import time
 
 def custom_wait_for_completion(task_description, output):
@@ -11,12 +10,9 @@ def custom_wait_for_completion(task_description, output):
     
     Returns: state (str) : final state
     """
-    if not len(task_description):
-        return 'COMPLETED'
-    
-    state = 'UNSUBMITTED'
+    state = 'UNSUBMITTED' if task_description != [] else 'COMPLETED'
     while not (state == 'COMPLETED' or state =='FAILED'):
-        output.add_live_msg(ms.STATUS.format(state))
+        output.add_live_msg('STATUS: {}'.format(state))
         time.sleep(5)
                     
         #search for the task in task_list

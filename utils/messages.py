@@ -35,6 +35,13 @@ NO_BANDS = "Please provide a the bands you want to observe on your images"
 NO_SOURCES = "please provide the satellite sources"
 SENTINEL_DISABLED = "The processing of the sentinel 2 images provide lots of blanks areas at the moment. we strongly suggest to only use landsat 7 images"
 VIZ_DISCLAIMER = "The bands displayed in this preview have not been stretched. The exporting process will vastly improve the contrats"
+START_YEAR = "Specify the start year"
+END_YEAR = "Specify the end year"
+SQUARE_SIZE = "Square size"
+NO_START = "Please provide a start year"
+NO_END = "Please provide a end year"
+NO_SQUARE = "Please provide a square size"
+WRONG_DATES = "Start year cannot be higher than end year"
 
 ##################################
 ##         Exports              ##

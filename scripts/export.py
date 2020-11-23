@@ -16,6 +16,7 @@ import numpy as np
 from shapely.geometry import box
 from PyPDF2 import PdfFileMerger, PdfFileReader
 from sepal_ui import gdal as sgdal
+import ipyvuetify as v
 
 
 from utils import gdrive
@@ -23,6 +24,26 @@ from utils import utils
 from utils import parameters as pm
 
 ee.Initialize()
+
+def update_progress(progress, output, msg='Progress', bar_length=30):
+    # not working yet in ipyvuetify 
+    plain_char = '█'
+    empty_char = ' '  
+    progress = float(progress)
+    block = int(round(bar_length * progress))
+
+    text = f'|{plain_char * block + empty_char * (bar_length - block)}|'
+    
+    output.add_live_msg(v.Html(
+        tag='span', 
+        children=[
+            v.Html(tag='span', children=[f'{msg}: '], class_='d-inline'),
+            v.Html(tag='pre', class_='info--text d-inline', children=[text]),
+            v.Html(tag='span', children=[f' {progress *100:.1f}%'], class_='d-inline')
+        ]
+    ))
+   
+    return
 
 def getNDVI(sources, satellite, bands, mask, year):
     
@@ -81,8 +102,9 @@ def getImage(sources, bands, mask, year):
     end = str(year) + '-12-31'
     
     #priority selector for satellites
-    for satelliteId in pm.getSatellites(sources):
-        dataset = ee.ImageCollection(pm.getSatellites(sources)[satelliteId]) \
+    satellites = pm.getSatellites(sources, year)
+    for satelliteId in satellites:
+        dataset = ee.ImageCollection(satellites[satelliteId]) \
             .filterDate(start, end) \
             .filterBounds(mask) \
             .map(pm.getCloudMask(satelliteId))
@@ -96,7 +118,11 @@ def getImage(sources, bands, mask, year):
     return (clip, satelliteId)
     
 
-def run(file, pts, bands, sources, output):
+def run(file, pts, bands, sources, start, end, square_size, output):
+    
+    #check dates 
+    start_year = start if start >= pm.min_start_year else pm.min_start_year
+    end_year = end if end <= pm.max_end_year else pm.max_end_year
     
     #get the filename
     filename = Path(file).stem
@@ -105,7 +131,7 @@ def run(file, pts, bands, sources, output):
     name_bands = '_'.join(bands.split(', '))
     
     #pdf name 
-    pdf_file = pm.getResultDir() + '{}_{}.pdf'.format(filename, name_bands)
+    pdf_file = f'{pm.getResultDir()}{filename}_{name_bands}_{start_year}_{end_year}.pdf'
     
     if os.path.isfile(pdf_file):
         output.add_live_msg('Pdf already exist', 'success')
@@ -118,59 +144,59 @@ def run(file, pts, bands, sources, output):
     ee_pts = {pts.iloc[i].name: ee.Geometry.Point(pts.iloc[i]['lng'], pts.iloc[i]['lat']) for i in range(len(pts))}
     
     #create the buffers 
-    ee_buffers = {i: ee_pts[i].buffer(2000).bounds() for i in ee_pts}
+    ee_buffers = {i: ee_pts[i].buffer(square_size).bounds() for i in ee_pts}
     
-    #create a multipolygon mask 
-    ee_multiPolygon = ee.Geometry.MultiPolygon([ee_buffers[i] for i in ee_buffers]).dissolve(maxError=100)  
+    #create a multipolygon mask
+    ee_multiPolygon = ee.Geometry.MultiPolygon([ee_pts[i].buffer(10000).bounds() for i in ee_pts]).dissolve(maxError=100)  
     
-    #create intelligent cliping multipolygons
-    buffers = [ee_pts[i].buffer(10000).bounds() for i in ee_pts]
+    #create intelligent cliping multipolygons of 10000 km
     geometries = ee_multiPolygon.geometries()
     ee_polygons = [geometries.get(i) for i in range(geometries.length().getInfo())]         
             
     #create a filename list 
     descriptions = {}
-    for year in range(pm.start_year, pm.end_year + 1):
-        descriptions[year] = '{}_{}_{}'.format(filename, name_bands, year)
-        
-    #check if all the multipolygons have bee downloaded in gdrive
+    for year in range(start_year, end_year + 1):
+        descriptions[year] = f'{filename}_{name_bands}_{year}'
     
     
     #load all the data in gdrive 
     satellites = {} #contain the names of the used satellites
     task_list = []
-    for year in range(pm.start_year, pm.end_year + 1):
-            
+    for i, year in enumerate(range(start_year, end_year + 1)):
+        
         image, satellites[year] = getImage(sources, bands, ee_multiPolygon, year)
         
-        for i, polygon in enumerate(ee_polygons):
+        for j, polygon in enumerate(ee_polygons):
             
-            description = descriptions[year] + "_{}".format(i)
+            description = f"{descriptions[year]}_{j}"
+            
+            if drive_handler.get_files(description) == []:
         
-            task_config = {
-                'image':image,
-                'description': description,
-                'scale': pm.getScale(satellites[year]),
-                'region': ee.Geometry(polygon),
-                'maxPixels': 10e12
-            }
+                task_config = {
+                    'image':image,
+                    'description': description,
+                    'scale': pm.getScale(satellites[year]),
+                    'region': ee.Geometry(polygon),
+                    'maxPixels': 10e12
+                }
             
-            task = ee.batch.Export.image.toDrive(**task_config)
-            task.start()
-            task_list.append(description)
-            
-        output.add_live_msg('exporting year: {}'.format(year))
+                task = ee.batch.Export.image.toDrive(**task_config)
+                task.start()
+                task_list.append(description)
+        
+        update_progress(i/(len(range(start_year, end_year + 1)) - 1), output, msg='Image loaded')
+        
     
     #check the exportation evolution     
     state = utils.custom_wait_for_completion(task_list, output)
-    output.add_live_msg('Export to drive finished', 'success')
+    output.add_live_msg('Download to drive finished', 'success')
     time.sleep(2)
     
     output.add_live_msg('Retreive to sepal')
     #retreive all the file ids 
     filesId = []
-    for description in task_list:
-        filesId += drive_handler.get_files(description)
+    for year in descriptions:
+        filesId += drive_handler.get_files(descriptions[year])
     
     #download the files   
     output.add_live_msg('Download files')
@@ -181,36 +207,33 @@ def run(file, pts, bands, sources, output):
     drive_handler.delete_files(filesId)     
     
     #merge them into a single file per year
-    output.add_live_msg('merge the files')
-    for year in range(pm.start_year, pm.end_year + 1):
-        files = [file for file in glob(pm.getTmpDir() + descriptions[year] + '*.tif')]
-        io = sgdal.merge(files, out_filename=pm.getTmpDir() + descriptions[year] + '.tif', v=True, output=output, co="COMPRESS=LZW")
+    for year in range(start_year, end_year + 1):
+        output.add_live_msg(f'merge the files for year {year}')
+        files = [file for file in glob(f'{pm.getTmpDir()}{descriptions[year]}_*.tif')]
+        io = sgdal.merge(files, out_filename=f'{pm.getTmpDir()}{descriptions[year]}.tif', v=True, output=output, co="COMPRESS=LZW")
+        for file in files:
+            os.remove(file)
     
     pdf_tmps = []
+    update_progress(0, output, msg='Pdf page created')
     for index, row in pts.iterrows():
-        
-        pdf_tmp = pm.getTmpDir() + '{}_{}_tmp_pts_{}.pdf'.format(filename, name_bands, row['id'])
+        pdf_tmp = f"{pm.getTmpDir()}{filename}_{name_bands}_tmp_pts_{row['id']}.pdf"
         pdf_tmps.append(pdf_tmp)
     
         #create the resulting pdf
         with PdfPages(pdf_tmp) as pdf:        
             
-            page_title = "Pt_{} (lat:{:.5f}, lng:{:.5f})".format(
-                int(row['id']), 
-                row['lat'], 
-                row['lng']
-            )
-            
-            output.add_live_msg('Creating page for pt {}'.format(int(row['id'])))
+            page_title = f"Pt_{row['id']} (lat:{row['lat']:.5f}, lng:{row['lng']:.5f})"
                   
             fig, axes = plt.subplots(pm.nb_line, pm.nb_col, figsize=(11.69,8.27), dpi=500)
             fig.suptitle(page_title, fontsize=16, fontweight ="bold")
             fig.set_tight_layout(True) 
             #display the images in a fig and export it as a pdf page
-            for year in range(pm.start_year, pm.end_year + 1):
+            placement_id = 0
+            for year in range(start_year, end_year + 1):
                 
                 #laod the file 
-                file = pm.getTmpDir() + descriptions[year] + '.tif'
+                file = f'{pm.getTmpDir()}{descriptions[year]}.tif'
                 
                 #extract the buffer bounds 
                 coords = ee_buffers[index].coordinates().get(0).getInfo()
@@ -243,34 +266,42 @@ def run(file, pts, bands, sources, output):
                 data = data.clip(0, 1)
                 data = np.transpose(data,[1,2,0])
             
-                i = year - pm.start_year
-                ax = axes[pm.getPositionPdf(i)[0], pm.getPositionPdf(i)[1]]
+                place = pm.getPositionPdf(placement_id) 
+                ax = axes[place[0], place[1]]
                 ax.imshow(data, interpolation='nearest')
                 ax.set_title(str(year) + ' ' + pm.getShortname(satellites[year]), x=.0, y=.9, fontsize='small', backgroundcolor='white', ha='left')
                 ax.axis('off')
-                ax.set_aspect('equal', 'box')            
+                ax.set_aspect('equal', 'box')
+                
+                #increment the placement image 
+                placement_id += 1
             
-            #finish the line with empty plots 
-            start = pm.end_year - pm.start_year
-            for i in range(5-(start+1)%5):
-                index = start + 1 + i
-                ax = axes[pm.getPositionPdf(index)[0], pm.getPositionPdf(index)[1]]
+            #finish the file with empty plots 
+            while placement_id < pm.nb_line * pm.nb_col:
+                place = pm.getPositionPdf(placement_id) 
+                ax = axes[place[0], place[1]]
                 ax.axis('off')
                 ax.set_aspect('equal', 'box')
+                
+                placement_id += 1
             
             #save the page
             pdf.savefig(fig)
             plt.close('all')
-            
-    #flush the tmp repository 
-    shutil.rmtree(pm.getTmpDir())
-    
+           
+        progress = index/(len(pts) - 1) if len(pts) > 1 else 1
+        update_progress(progress, output, msg='Pdf page created')
+        
     #merge all the pdf files 
+    output.add_live_msg('merge all pdf files')
     mergedObject = PdfFileMerger()
     for pdf in pdf_tmps:
         mergedObject.append(PdfFileReader(pdf, 'rb'))
         os.remove(pdf)
     mergedObject.write(pdf_file)
+    
+    #flush the tmp repository 
+    shutil.rmtree(pm.getTmpDir())
     
     output.add_live_msg('PDF output finished', 'success')
     

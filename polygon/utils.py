@@ -1,14 +1,25 @@
-#hard coded parameters
+from shapely.geometry import Point
+from math import sqrt
 import os
-import glob
-import ee
+from datetime import datetime
+
+import ee 
+
+from parameters import square_size
 
 ee.Initialize()
 
 #########################
-##       folders       ##
+####   constants      ###
 #########################
+end_year = datetime.now().year
+nb_line = 4
+nb_col = 5
+sources = ['landsat', 'sentinel']
 
+##############################
+#####     folders          ###
+##############################
 def create_folder(pathname):
     if not os.path.exists(pathname):
         os.makedirs(pathname)
@@ -22,36 +33,58 @@ def getTmpDir():
     pathname = os.path.join(getResultDir(), 'tmp') + '/'
     return create_folder(pathname)
 
-##########################
-##      constant        ##
-##########################
 
-min_start_year = 2005
-max_end_year = 2020 #when changing check that the number of line and column is still adapted
-nb_line = 4
-nb_col = 5
-sources = ['landsat', 'sentinel']
-min_square = 500
-max_square = 10000
+
+########################
+##   functions        ##
+########################
+
+def to_square(polygon):
+    
+    minx, miny, maxx, maxy = polygon.bounds
+    
+    #min size in latitude (appro)
+    min_size = square_size/111
+    
+    # get the centroid
+    centroid = [(maxx+minx)/2, (maxy+miny)/2]
+    # get the diagonal
+    diagonal = max(min_size, sqrt((maxx-minx)**2+(maxy-miny)**2))
+    
+    return Point(centroid).buffer(diagonal/2, cap_style=3)
 
 ##########################
-##       function       ##
+##     staelites inputs ##
 ##########################
 def getPositionPdf(i):  
     """Return the position of the square on the pdf page"""
     return [int(i/5), i%5]
 
-def getSatellites(sources, year):
+def getSatellites(sources):
     
     satellites = {}
     
-    if 'sentinel' in sources and year >= 2015: satellites['sentinel_2'] = 'COPERNICUS/S2_SR'
+    if 'sentinel' in sources:
+        satellites.update({'sentinel_2': 'COPERNICUS/S2_SR'})
+        
     if 'landsat' in sources:
-        if year >= 2013: satellites['landsat_8'] = 'LANDSAT/LC08/C01/T1_SR'
-        if year <= 2013: satellites['landsat_5'] = 'LANDSAT/LT05/C01/T1_SR'
-        satellites['landsat_7'] = 'LANDSAT/LE07/C01/T1_SR'
+        satellites.update({
+            'landsat_8': 'LANDSAT/LC08/C01/T1_SR',
+            'landsat_5': 'LANDSAT/LT05/C01/T1_SR',
+            'landsat_7': 'LANDSAT/LE07/C01/T1_SR',
+        })
         
     return satellites
+
+def getScale(satellite):
+    scale = {
+        'sentinel_2': 10,
+        'landsat_5': 30, 
+        'landsat_7': 30,
+        'landsat_8': 30
+    }
+    
+    return scale[satellite]
 
 def getShortname(satellite):
     short = {
@@ -62,17 +95,6 @@ def getShortname(satellite):
     }
     
     return short[satellite]
-
-def getScale(satellite):
-    
-    scale = {
-        'sentinel_2': 10,
-        'landsat_5': 30, 
-        'landsat_7': 30,
-        'landsat_8': 30
-    }
-    
-    return scale[satellite]
         
 
 def getAvailableBands():
@@ -135,17 +157,6 @@ def getAvailableBands():
     
     return bands
 
-def vizParam(bands, buffer, image, satellite):
-    
-    if not bands: #didn't find images for the sample
-        return {}
-
-    return {
-        'min': 0,
-        'max': 3000,
-        'bands': bands
-    }
-
 def getCloudMask(satelliteId):
     """ return the cloud masking function adapted to the apropriate satellite"""
     
@@ -182,3 +193,26 @@ def getCloudMask(satelliteId):
             return image.updateMask(mask)#.divide(10000)
     
     return cloudMask
+
+def getImage(sources, bands, mask, year):
+    
+    start = str(year) + '-01-01'
+    end = str(year) + '-12-31'
+    
+    #priority selector for satellites
+    for satelliteId in getSatellites(sources):
+        dataset = ee.ImageCollection(getSatellites(sources)[satelliteId]) \
+            .filterDate(start, end) \
+            .filterBounds(mask) \
+            .map(getCloudMask(satelliteId))
+        
+        if dataset.size().getInfo() > 0:
+            satellite = satelliteId
+            break
+            
+    clip = dataset.median().clip(mask).select(getAvailableBands()[bands][satelliteId])
+    
+    return (clip, satelliteId)
+    
+
+

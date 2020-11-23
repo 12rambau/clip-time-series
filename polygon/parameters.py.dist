@@ -1,0 +1,33 @@
+#name of the file conatining the polygon list
+# need to include at least a 'id' feature
+polygon_file = '~/folder/ThisIsNotAFileName'
+
+# bands combo you want to display
+#need to be one of : 
+    #'Red, Green, Blue'
+    #'Nir, Red, Green'
+    #'Nir, Swir1, Red' 
+    #'Swir2, Nir, Red' 
+    #'Swir2, Swir1, Red'
+    #'Swir2, Nir, Green' 
+bands_combo = 'Red, Green, Blue'
+
+#number of squares to display on the map to verify there size and shapes
+nb_squares = 10
+
+# the color and size wich will be used for the display of the polygon
+# You'll want to change it according to your band combo
+polygon_color = 'yellow'
+polygon_width = 1
+
+# set if you're in test mode 
+# will only take the first 2 polygons of your list 
+# use the test to check your band combo and polygon color before lauching huge downloads
+test_mode = True
+
+# the starting year of the time serie
+# minimum 2005, maximum now
+start_year = 2007
+
+# the size of the minimum square around the polygon in km
+square_size = 2
