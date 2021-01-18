@@ -1,7 +1,8 @@
-#hard coded parameters
+# hard coded parameters
 import os
 import glob
 import ee
+from pathlib import Path
 
 ee.Initialize()
 
@@ -9,25 +10,22 @@ ee.Initialize()
 ##       folders       ##
 #########################
 
-def create_folder(pathname):
-    if not os.path.exists(pathname):
-        os.makedirs(pathname)
-    return pathname
-
 def getResultDir():
-    pathname = os.path.join(os.path.expanduser('~'), 'clip_results') + '/'
-    return create_folder(pathname)
+    result_dir = Path('~', 'clip_results').expanduser()
+    result_dir.mkdir(exist_ok=True)
+    return result_dir
 
 def getTmpDir():
-    pathname = os.path.join(getResultDir(), 'tmp') + '/'
-    return create_folder(pathname)
+    tmp_dir = getResultDir().joinpath('tmp')
+    tmp_dir.mkdir(exist_ok=True)
+    return tmp_dir
 
 ##########################
 ##      constant        ##
 ##########################
 
 min_start_year = 2005
-max_end_year = 2020 #when changing check that the number of line and column is still adapted
+max_end_year = 2020 # when changing check that the number of line and column is still adapted
 nb_line = 4
 nb_col = 5
 sources = ['landsat', 'sentinel']

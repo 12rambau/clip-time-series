@@ -1,5 +1,6 @@
 import ee
 import io
+from pathlib import Path
 from googleapiclient.http import MediaIoBaseDownload
 from apiclient import discovery
 
@@ -22,7 +23,8 @@ class gdrive(object):
 
         for task in tasks['items']:
             print(task['title'])
-
+            
+        return
 
     def print_file_list(self):
         """ for debugging purpose, print the list of all the file in the Gdrive"""
@@ -37,6 +39,8 @@ class gdrive(object):
             print('Files:')
             for item in items:
                 print('{0} ({1})'.format(item['name'], item['id']))
+                
+        return
 
     def get_items(self):
         """ get all the items in the Gdrive, items will have 2 columns, 'name' and 'id' """ 
@@ -53,7 +57,7 @@ class gdrive(object):
     
     
     def get_files(self, file_name):
-        """ look for the file_name patern in my Gdrive files and retreive a list of Ids"""
+        """ look for the file_name patern in my Gdrive files and retrieve a list of Ids"""
         
         items = self.get_items()
         files = []
@@ -64,8 +68,14 @@ class gdrive(object):
         return files
                                 
     def download_files(self, files, local_path):
+        
+        # convert to pathlib 
+        local_path = Path(local_path)
+        
+        # start service
         service = self.service
         
+        # write each file
         for file in files:
             request = service.files().get_media(fileId=file['id'])
             fh = io.BytesIO()
@@ -73,10 +83,11 @@ class gdrive(object):
             done = False
             while done is False:
                 status, done = downloader.next_chunk()
-            
-            fo = open(local_path+file['name'], 'wb')
-            fo.write(fh.getvalue())
-            fo.close()
+                
+            with local_path.joinpath(file['name']).open('wb') as f:
+                f.write(fh.getvalue())
+                
+        return
 
     def delete_files(self, files):
 
@@ -84,3 +95,5 @@ class gdrive(object):
         
         for file in files:
             service.files().delete(fileId=file['id']).execute()
+            
+        return

@@ -15,7 +15,6 @@ from rasterio.profiles import DefaultGTiffProfile
 import numpy as np
 from shapely.geometry import box
 from PyPDF2 import PdfFileMerger, PdfFileReader
-from sepal_ui import gdal as sgdal
 import ipyvuetify as v
 
 
@@ -121,8 +120,8 @@ def getImage(sources, bands, mask, year):
 def run(file, pts, bands, sources, start, end, square_size, output):
     
     #check dates 
-    start_year = start if start >= pm.min_start_year else pm.min_start_year
-    end_year = end if end <= pm.max_end_year else pm.max_end_year
+    start_year = max(start, pm.min_start_year)
+    end_year = min(end, pm.max_end_year)
     
     #get the filename
     filename = Path(file).stem
@@ -131,9 +130,9 @@ def run(file, pts, bands, sources, start, end, square_size, output):
     name_bands = '_'.join(bands.split(', '))
     
     #pdf name 
-    pdf_file = f'{pm.getResultDir()}{filename}_{name_bands}_{start_year}_{end_year}.pdf'
+    pdf_file = pm.getResultDir().joinpath(f'{filename}_{name_bands}_{start_year}_{end_year}.pdf')
     
-    if os.path.isfile(pdf_file):
+    if pdf_file.is_file():
         output.add_live_msg('Pdf already exist', 'success')
         return pdf_file
     
@@ -158,9 +157,8 @@ def run(file, pts, bands, sources, start, end, square_size, output):
     for year in range(start_year, end_year + 1):
         descriptions[year] = f'{filename}_{name_bands}_{year}'
     
-    
     #load all the data in gdrive 
-    satellites = {} #contain the names of the used satellites
+    satellites = {} # contain the names of the used satellites
     task_list = []
     for i, year in enumerate(range(start_year, end_year + 1)):
         
@@ -171,7 +169,7 @@ def run(file, pts, bands, sources, start, end, square_size, output):
             description = f"{descriptions[year]}_{j}"
             
             if drive_handler.get_files(description) == []:
-        
+            
                 task_config = {
                     'image':image,
                     'description': description,
@@ -203,21 +201,18 @@ def run(file, pts, bands, sources, start, end, square_size, output):
     drive_handler.download_files(filesId, pm.getTmpDir())  
     
     #remove the files from gdrive 
-    output.add_live_msg('Remove from gdrive')
-    drive_handler.delete_files(filesId)     
+    #output.add_live_msg('Remove from gdrive')
+    #drive_handler.delete_files(filesId)     
     
     #merge them into a single file per year
     for year in range(start_year, end_year + 1):
         output.add_live_msg(f'merge the files for year {year}')
-        files = [file for file in glob(f'{pm.getTmpDir()}{descriptions[year]}_*.tif')]
-        io = sgdal.merge(files, out_filename=f'{pm.getTmpDir()}{descriptions[year]}.tif', v=True, output=output, co="COMPRESS=LZW")
-        for file in files:
-            os.remove(file)
+        merge_tiles(pm.getTmpDir(), descriptions[year], output)
     
     pdf_tmps = []
     update_progress(0, output, msg='Pdf page created')
     for index, row in pts.iterrows():
-        pdf_tmp = f"{pm.getTmpDir()}{filename}_{name_bands}_tmp_pts_{row['id']}.pdf"
+        pdf_tmp = pm.getTmpDir().joinpath(f'{filename}_{name_bands}_tmp_pts_{row["id"]}.pdf')
         pdf_tmps.append(pdf_tmp)
     
         #create the resulting pdf
@@ -233,7 +228,7 @@ def run(file, pts, bands, sources, start, end, square_size, output):
             for year in range(start_year, end_year + 1):
                 
                 #laod the file 
-                file = f'{pm.getTmpDir()}{descriptions[year]}.tif'
+                file = pm.getTmpDir().joinpath(f'{descriptions[year]}.tif')
                 
                 #extract the buffer bounds 
                 coords = ee_buffers[index].coordinates().get(0).getInfo()
@@ -296,16 +291,58 @@ def run(file, pts, bands, sources, start, end, square_size, output):
     output.add_live_msg('merge all pdf files')
     mergedObject = PdfFileMerger()
     for pdf in pdf_tmps:
-        mergedObject.append(PdfFileReader(pdf, 'rb'))
-        os.remove(pdf)
-    mergedObject.write(pdf_file)
+        mergedObject.append(PdfFileReader(str(pdf), 'rb'))
+        pdf.unlink()
+    mergedObject.write(str(pdf_file))
     
     #flush the tmp repository 
-    shutil.rmtree(pm.getTmpDir())
+    #shutil.rmtree(pm.getTmpDir())
+    for file in pm.getTmpDir().glob('*.*'):
+        file.unlink()
+    pm.getTmpDir().rmdir()
     
     output.add_live_msg('PDF output finished', 'success')
     
     return pdf_file
     
+def merge_tiles(folder, basename, output):
+    """merge the tile from the folder with the parameter basename pattern"""
     
+    # construct the pattern
+    pattern = f'{basename}_*.tif'
+    output_file = folder.joinpath(f'{basename}.tif')
+    
+    if output_file.is_file():
+        return
+    
+    # get all the files that need to be merged
+    files = [file for file in folder.glob(pattern)]
+        
+    #run the merge process
+    output.add_live_msg('Merging the GEE tiles')
+    
+    #manual open and close because I don't know how many file there are
+    sources = [rio.open(file) for file in files]
+
+    data, output_transform = merge(sources)
+    
+    out_meta = sources[0].meta.copy()    
+    out_meta.update(
+        driver    = "GTiff",
+        height    =  data.shape[1],
+        width     =  data.shape[2],
+        transform = output_transform,
+        compress  = 'lzw'
+    )
+    
+    with rio.open(output_file, "w", **out_meta) as dest:
+        dest.write(data)
+    
+    #manually close the files
+    [src.close() for src in sources]
+    
+    #delete local files
+    [os.remove(file) for file in files]
+    
+    return
     

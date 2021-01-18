@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+import shutil
 
 import pandas as pd 
 import geemap
@@ -43,3 +45,20 @@ def setMap(pts, m):
     m.set_center(0, 0, zoom=2)
 
     return 
+
+def download_test_file(output):
+    
+    #get the file name 
+    filename = 'clip_test_points.csv'
+    
+    # get the test and download folders
+    dst_file = Path('~', 'downloads').expanduser()
+    src_file = Path(__file__).parents[1].joinpath('test_data', filename)
+    
+    # download the file to the download directory 
+    shutil.copy(src_file, dst_file)
+    
+    # update the output
+    output.add_live_msg(f"The test dataset have been downloaded. It will be available in the `~/downloads/{filename}` folder of your sepal account.") #" The file has been automatically set as source file in the select table tile.")
+    
+    return dst_file 
